@@ -28,7 +28,7 @@ class Calculator:
      **NB: usage not tested, and may not be supported in future.**
     :type instrument_setup: dict
     """
-    def __init__(self, user_input={}, instrument_setup={},finetune=False):
+    def __init__(self, user_input={}, instrument_setup={},finetune='none'):
 
         self.finetune = finetune
 
@@ -491,6 +491,14 @@ class Calculator:
         # Implement a Builder interface to construct all three objects using
         # the same observing frequency?
 
+
+        # LDM
+        # ------------------------------------------------------------------
+        # T_atm, tau_atm, and the various temps values are not actually used
+        # for computing the sefd, but I kept this part to avoid breaking the
+        # build of DerivedParams below
+        # ------------------------------------------------------------------
+
         # Perform efficiencies calculations
         eta = Efficiencies(self.obs_freq, self.surface_rms, self.eta_ill,
                            self.eta_spill, self.eta_block, self.eta_pol)
@@ -506,26 +514,56 @@ class Calculator:
         temps = Temperatures(self.obs_freq, self.T_cmb, self.T_amb, self.g,
                              self.eta_eff, T_atm, tau_atm)
 
-        # Calculate source equivalent flux density
+        # LDM
+        # ------------------------------------------------------------------
+        # This is where the snippet starts. The idea is to compute an
+        # effect sefd as sefd_eff = sqrt(dnu/sum(dnu_i/sefd_i)), where dnu
+        # is the total bandwidth and dnu_i the widths of the narrow channels
+        # for which we compute each sefd_i. This comes from basic noise 
+        # statistics consideration for computing the total RMS for a broad
+        # band composed of n independent channels. 
+        # I included three modes for computing sefd:
+        # > finetune = 'none' ~ standard mode
+        # > finetune = 'sefd' ~ derive an integral average of sefd over the
+        #                       given frequency range [for testing]
+        # > finetune = 'sens' ~ inverse variance sum
+        # ------------------------------------------------------------------
+
+        # define lower and upper limit of the requested band
         obs_freq_low = (self.obs_freq-0.50*self.bandwidth).to('GHz').value
         obs_freq_upp = (self.obs_freq+0.50*self.bandwidth).to('GHz').value
 
+        # select all the frequencies in the atm tables comprised within the band edges
         obs_freq_list = atm.tau_atm_table[:, 0][np.logical_and(atm.tau_atm_table[:, 0]>obs_freq_low,
                                                                atm.tau_atm_table[:, 0]<obs_freq_upp)]
+       
+        # pad the frequency array to include the lower/upper band edges 
+        obs_freq_list = np.concatenate(([obs_freq_low],obs_freq_list,[obs_freq_upp]))*u.GHz
 
-        if self.finetune and len(obs_freq_list)>1:
+        if self.finetune!='none' and len(obs_freq_list)>1:
+            
             _sefd = []
+            
+            if self.finetune=='sens':
+                obs_band_list = (obs_freq_list[1:]-obs_freq_list[:-1])
+                obs_freq_list = (obs_freq_list[1:]+obs_freq_list[:-1])*0.50
+
             for freq in obs_freq_list:
                 _tau_atm = atm.calculate_tau_atm(freq,self.weather,self.elevation)
 
                 _T_atm = atm.calculate_atmospheric_temperature(freq,self.weather)
-                _temps = Temperatures(freq*u.GHz, self.T_cmb, self.T_amb, self.g,
+                _temps = Temperatures(freq, self.T_cmb, self.T_amb, self.g,
                                       self.eta_eff, _T_atm, _tau_atm)
 
                 _sefd.append(self._calculate_sefd(_temps.T_sys,eta.eta_a).to('J/m2').value)
 
-            sefd = trapz(x=obs_freq_list,y=_sefd)*(u.J/u.m**2)/ \
-                   trapz(x=obs_freq_list,y=np.ones(obs_freq_list.shape[0]))
+            _sefd = np.asarray(_sefd)*(u.J/u.m**2)
+
+            if self.finetune=='sefd':
+                sefd = trapz(x=obs_freq_list,y=_sefd)/ \
+                       trapz(x=obs_freq_list,y=np.ones(obs_freq_list.shape[0]))
+            elif self.finetune=='sens':
+                sefd = np.sqrt(self.bandwidth/np.sum(obs_band_list/_sefd**2))
         else:
             sefd = self._calculate_sefd(temps.T_sys, eta.eta_a)
 
