@@ -130,7 +130,7 @@ class Data:
     elevation = DataType(
         default_value=45,
         default_unit=str(u.deg),
-        lower_value=25,
+        lower_value=20,
         upper_value=85,
         units=[str(u.deg)]
     )

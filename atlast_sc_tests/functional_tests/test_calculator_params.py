@@ -83,7 +83,7 @@ class TestCalculationInput:
              pytest.raises(ValidationError), value_out_of_range_exception),
             ({'elevation': {'value': 40, 'unit': 'deg'}}, does_not_raise(),
              None),
-            ({'elevation': {'value': 25, 'unit': 'deg'}}, does_not_raise(),
+            ({'elevation': {'value': 20, 'unit': 'deg'}}, does_not_raise(),
              None),
             ({'elevation': {'value': 85, 'unit': 'deg'}}, does_not_raise(),
              None),
